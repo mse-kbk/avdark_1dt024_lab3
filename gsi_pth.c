@@ -14,6 +14,7 @@
  #include <stdio.h>
  #include <stdlib.h>
  #include <math.h>
+ #include <stdatomic.h>
  
  #include "gs_interface.h"
  
@@ -32,7 +33,10 @@
          double error;
  
          /* TASK: Do you need any thread local state for synchronization? */
-        volatile int row_flag;
+        volatile atomic_int row_flag;
+        //24 bytes without padding -> +40 bytes padding
+        int padding[10];
+
  } thread_info_t;
  
  /** Define to enable debug mode */
@@ -69,7 +73,7 @@
  
          /* TASK: Initialize global variables here */
          for (int i=0; i<gs_nthreads; i++) {
-                threads[i].row_flag = 0;
+                atomic_init(&threads[i].row_flag, 0);
          }
          pthread_barrier_init(&barrier, NULL, gs_nthreads);
 
@@ -104,9 +108,8 @@
                  /* TASK: Wait for data to be available from the thread
                   * to the left */
                  if (tid >0) {
-                        while (threads[tid-1].row_flag <= threads[tid].row_flag+1) {
-                                continue;
-                        }
+                        while (atomic_load_explicit(&threads[tid-1].row_flag, memory_order_acquire) <= 
+                                atomic_load_explicit(&threads[tid].row_flag, memory_order_acquire)) { };
                  }
  
                  dprintf("%d: Starting on row: %d\n", tid, row);
@@ -125,11 +128,11 @@
  
                  /* TASK: Tell the thread to the right that this thread
                   * is done with the row */
-                 threads[tid].row_flag++;
+                 atomic_fetch_add_explicit(&threads[tid].row_flag, 1, memory_order_release);
  
                  dprintf("%d: row %d done\n", tid, row);
          }
-         threads[tid].row_flag++;
+         atomic_fetch_add_explicit(&threads[tid].row_flag, 1, memory_order_release);
  
  }
  
@@ -145,8 +148,8 @@
          int lbound = 0, rbound = 0;
  
          /* TASK: Compute bounds for this thread */
-         lbound = tid*gs_size/gs_nthreads;
-         rbound = (tid+1)*gs_size/gs_nthreads;
+         lbound = fmax(1,tid*gs_size/gs_nthreads);
+         rbound = fmin(gs_size-1,(tid+1)*gs_size/gs_nthreads);
  
          gs_verbose_printf("%i: lbound: %i, rbound: %i\n",
                            tid, lbound, rbound);
